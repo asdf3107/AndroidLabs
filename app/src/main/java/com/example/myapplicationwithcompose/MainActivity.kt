@@ -24,10 +24,14 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.ui.graphics.Brush
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        DatabaseHelper.initializeDatabase(this)
         setContent {
             MyApplicationTheme {
                 Surface(
@@ -86,15 +90,9 @@ fun LoginScreen(onLoginSuccess: () -> Unit) {
     var passwordError by rememberSaveable { mutableStateOf(false) }
     var errorMessage by rememberSaveable { mutableStateOf("") }
     var showError by rememberSaveable { mutableStateOf(false) }
+    var isLoading by rememberSaveable { mutableStateOf(false) }
 
-    val validCredentials = listOf(
-        "1" to "1",
-        "user1@mail.com" to "password1",
-        "user2@mail.com" to "password2",
-        "user3@mail.com" to "password3",
-        "user4@mail.com" to "password4",
-        "user5@mail.com" to "password5"
-    )
+    val context = androidx.compose.ui.platform.LocalContext.current
 
     // Определяем ориентацию экрана
     val configuration = LocalConfiguration.current
@@ -173,17 +171,30 @@ fun LoginScreen(onLoginSuccess: () -> Unit) {
                     return@Button
                 }
 
-                val isValid = validCredentials.any { (validEmail, validPassword) ->
-                    email == validEmail && password == validPassword
-                }
-
-                if (isValid) {
-                    onLoginSuccess()
-                } else {
-                    emailError = true
-                    passwordError = true
-                    errorMessage = "Неверный E-mail или пароль"
-                    showError = true
+                isLoading = true
+                CoroutineScope(Dispatchers.IO).launch {
+                    try {
+                        val db = AppDatabase.getDatabase(context)
+                        val user = db.userDao().authenticate(email, password)
+                        
+                        CoroutineScope(Dispatchers.Main).launch {
+                            isLoading = false
+                            if (user != null) {
+                                onLoginSuccess()
+                            } else {
+                                emailError = true
+                                passwordError = true
+                                errorMessage = "Неверный E-mail или пароль"
+                                showError = true
+                            }
+                        }
+                    } catch (e: Exception) {
+                        CoroutineScope(Dispatchers.Main).launch {
+                            isLoading = false
+                            errorMessage = "Ошибка базы данных: ${e.message}"
+                            showError = true
+                        }
+                    }
                 }
             },
             modifier = Modifier
@@ -192,14 +203,23 @@ fun LoginScreen(onLoginSuccess: () -> Unit) {
             shape = RoundedCornerShape(8.dp),
             colors = ButtonDefaults.buttonColors(
                 containerColor = Color(0xFF6200EE)
-            )
+            ),
+            enabled = !isLoading
         ) {
-            Text(
-                text = "Войти",
-                fontSize = 16.sp,
-                fontWeight = FontWeight.Bold,
-                color = Color.White
-            )
+            if (isLoading) {
+                CircularProgressIndicator(
+                    modifier = Modifier.size(24.dp),
+                    strokeWidth = 2.dp,
+                    color = Color.White
+                )
+            } else {
+                Text(
+                    text = "Войти",
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = Color.White
+                )
+            }
         }
 
         // Сообщение об ошибке

@@ -6,8 +6,8 @@ import retrofit2.http.GET
 
 data class Movie(
     val title: String,
-    val releaseDate: String,
-    val imdbRating: Double
+    val imdbRating: Double,
+    val posterURL: String
 )
 
 interface MovieApi {

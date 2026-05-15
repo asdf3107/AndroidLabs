@@ -20,10 +20,11 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
+import androidx.compose.ui.platform.LocalContext
 
 class MoviesViewModel : ViewModel() {
-    private val _movies = MutableStateFlow<List<Movie>>(emptyList())
-    val movies: StateFlow<List<Movie>> = _movies
+    private val _movies = MutableStateFlow<List<MovieEntity>>(emptyList())
+    val movies: StateFlow<List<MovieEntity>> = _movies
 
     private val _isLoading = MutableStateFlow(true)
     val isLoading: StateFlow<Boolean> = _isLoading
@@ -33,14 +34,42 @@ class MoviesViewModel : ViewModel() {
 
     private var ascending = true
 
-    init {
-        loadMovies()
+    private suspend fun saveMoviesToDb(movies: List<Movie>, context: android.content.Context) {
+        val db = AppDatabase.getDatabase(context)
+        val movieEntities = movies.map { movie ->
+            MovieEntity(
+                title = movie.title,
+                releaseDate = "1111",
+                imdbRating = movie.imdbRating,
+                director = "Unknown",
+                duration = 90,
+                genre = "Animation"
+            )
+        }
+        db.movieDao().deleteAll()
+        db.movieDao().insertAll(movieEntities)
     }
 
-    private fun loadMovies() {
+    private suspend fun loadMoviesFromDb(context: android.content.Context): List<MovieEntity> {
+        val db = AppDatabase.getDatabase(context)
+        return db.movieDao().getAll()
+    }
+
+    fun loadMovies(context: android.content.Context) {
         viewModelScope.launch {
             try {
-                _movies.value = RetrofitClient.api.getMovies()
+                // Сначала пробуем загрузить из БД
+                val dbMovies = loadMoviesFromDb(context)
+                if (dbMovies.isNotEmpty()) {
+                    _movies.value = dbMovies
+                    _isLoading.value = false
+                    return@launch
+                }
+                
+                // Если в БД пусто, загружаем из API и сохраняем в БД
+                val apiMovies = RetrofitClient.api.getMovies()
+                saveMoviesToDb(apiMovies, context)
+                _movies.value = loadMoviesFromDb(context)
             } catch (e: Exception) {
                 _error.value = "Ошибка загрузки: ${e.message}"
             } finally {
@@ -80,6 +109,11 @@ fun SecondScreen(vm: MoviesViewModel = viewModel()) {
     val isLoading by vm.isLoading.collectAsState()
     val error by vm.error.collectAsState()
     var ascending by remember { mutableStateOf(true) }
+    val context = LocalContext.current
+
+    LaunchedEffect(Unit) {
+        vm.loadMovies(context)
+    }
 
     Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
         Button(
@@ -112,7 +146,7 @@ fun SecondScreen(vm: MoviesViewModel = viewModel()) {
 }
 
 @Composable
-fun MovieItem(movie: Movie) {
+fun MovieItem(movie: MovieEntity) {
     Card(
         modifier = Modifier.fillMaxWidth(),
         elevation = CardDefaults.cardElevation(4.dp)
@@ -121,6 +155,9 @@ fun MovieItem(movie: Movie) {
             Text(movie.title, fontWeight = FontWeight.Bold, fontSize = 16.sp)
             Text("Дата выхода: ${movie.releaseDate}", fontSize = 14.sp, color = Color.Gray)
             Text("Рейтинг IMDb: ${movie.imdbRating}", fontSize = 14.sp, color = Color.Gray)
+            Text("Режиссёр: ${movie.director}", fontSize = 14.sp, color = Color.Gray)
+            Text("Длительность: ${movie.duration} мин", fontSize = 14.sp, color = Color.Gray)
+            Text("Жанр: ${movie.genre}", fontSize = 14.sp, color = Color.Gray)
         }
     }
 }
