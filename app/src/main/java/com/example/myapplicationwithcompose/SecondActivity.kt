@@ -6,21 +6,33 @@ import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.clickable
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.compose.viewModel
+
+import androidx.navigation.NavType
+import androidx.navigation.compose.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 import androidx.compose.ui.platform.LocalContext
+
+import androidx.navigation.compose.NavHost
+//import androidx.navigation.compose.composable
+//import androidx.navigation.compose.rememberNavController
+import androidx.navigation.navArgument   // ← this fixes navArgument + type
+
+
 
 class MoviesViewModel : ViewModel() {
     private val _movies = MutableStateFlow<List<MovieEntity>>(emptyList())
@@ -58,7 +70,6 @@ class MoviesViewModel : ViewModel() {
     fun loadMovies(context: android.content.Context) {
         viewModelScope.launch {
             try {
-                // Сначала пробуем загрузить из БД
                 val dbMovies = loadMoviesFromDb(context)
                 if (dbMovies.isNotEmpty()) {
                     _movies.value = dbMovies
@@ -66,7 +77,6 @@ class MoviesViewModel : ViewModel() {
                     return@launch
                 }
                 
-                // Если в БД пусто, загружаем из API и сохраняем в БД
                 val apiMovies = RetrofitClient.api.getMovies()
                 saveMoviesToDb(apiMovies, context)
                 _movies.value = loadMoviesFromDb(context)
@@ -92,11 +102,44 @@ class SecondActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         setContent {
             MyApplicationTheme {
-                Surface(
-                    modifier = Modifier.fillMaxSize(),
-                    color = MaterialTheme.colorScheme.background
-                ) {
-                    SecondScreen()
+                Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
+                    val navController = rememberNavController()
+                    NavHost(navController = navController, startDestination = "list") {
+                        composable("list") {
+                            SecondScreen(
+                                onMovieClick = { movie ->
+                                    navController.navigate("detail/${movie.title}")
+                                }
+                            )
+                        }
+                        composable(
+                            "detail/{title}",
+                            arguments = listOf(navArgument("title") { type = NavType.StringType })
+                        ) { backStackEntry ->
+                            val title = backStackEntry.arguments?.getString("title") ?: ""
+                            val context = LocalContext.current
+                            val db = AppDatabase.getDatabase(context)
+
+//                            val movie by remember(title) {
+//                                derivedStateOf {
+//                                    db.movieDao().getAll().find { it.title == title }
+//                                }
+//                            }
+
+                            val movie by produceState<MovieEntity?>(initialValue = null, title) {
+                                value = db.movieDao().getAll().find { it.title == title }
+                            }
+
+
+                            if (movie != null) {
+                                MovieDetailScreen(
+                                    movie = movie!!,
+                                    navController = navController,
+                                    onBackClick = { navController.popBackStack() }
+                                )
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -104,7 +147,7 @@ class SecondActivity : ComponentActivity() {
 }
 
 @Composable
-fun SecondScreen(vm: MoviesViewModel = viewModel()) {
+fun SecondScreen(vm: MoviesViewModel = viewModel(), onMovieClick: (MovieEntity) -> Unit) {
     val movies by vm.movies.collectAsState()
     val isLoading by vm.isLoading.collectAsState()
     val error by vm.error.collectAsState()
@@ -115,30 +158,91 @@ fun SecondScreen(vm: MoviesViewModel = viewModel()) {
         vm.loadMovies(context)
     }
 
-    Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
-        Button(
-            onClick = {
-                ascending = !ascending
-                vm.toggleSort()
-            },
-            modifier = Modifier.fillMaxWidth(),
-            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF6200EE))
-        ) {
-            Text(if (ascending) "А → Я" else "Я → А", color = Color.White)
+    val configuration = LocalConfiguration.current
+    val isLandscape = configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
+
+    if (isLandscape) {
+        Row(modifier = Modifier.fillMaxSize()) {
+            Column(
+                modifier = Modifier.weight(1f).padding(16.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Text(
+                    text = "Список фильмов",
+                    fontSize = 20.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = Color(0xFF6200EE),
+                    modifier = Modifier.padding(bottom = 16.dp)
+                )
+
+                Button(
+                    onClick = {
+                        ascending = !ascending
+                        vm.toggleSort()
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF6200EE))
+                ) {
+                    Text(if (ascending) "А → Я" else "Я → А", color = Color.White)
+                }
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                when {
+                    isLoading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        CircularProgressIndicator()
+                    }
+                    error != null -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        Text(error!!, color = Color.Red)
+                    }
+                    else -> LazyColumn(
+                        modifier = Modifier.fillMaxSize(),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        items(movies) { movie ->
+                            MovieItem(movie = movie, onClick = { onMovieClick(movie) })
+                        }
+                    }
+                }
+            }
         }
+    } else {
+        Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
+            Text(
+                text = "Список фильмов",
+                fontSize = 24.sp,
+                fontWeight = FontWeight.Bold,
+                color = Color(0xFF6200EE),
+                modifier = Modifier.padding(bottom = 16.dp)
+            )
 
-        Spacer(modifier = Modifier.height(8.dp))
+            Button(
+                onClick = {
+                    ascending = !ascending
+                    vm.toggleSort()
+                },
+                modifier = Modifier.fillMaxWidth(),
+                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF6200EE))
+            ) {
+                Text(if (ascending) "А → Я" else "Я → А", color = Color.White)
+            }
 
-        when {
-            isLoading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                CircularProgressIndicator()
-            }
-            error != null -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Text(error!!, color = Color.Red)
-            }
-            else -> LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                items(movies) { movie ->
-                    MovieItem(movie)
+            Spacer(modifier = Modifier.height(8.dp))
+
+            when {
+                isLoading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    CircularProgressIndicator()
+                }
+                error != null -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    Text(error!!, color = Color.Red)
+                }
+                else -> LazyColumn(
+                    modifier = Modifier.fillMaxSize(),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    items(movies) { movie ->
+                        MovieItem(movie = movie, onClick = { onMovieClick(movie) })
+                    }
                 }
             }
         }
@@ -146,9 +250,11 @@ fun SecondScreen(vm: MoviesViewModel = viewModel()) {
 }
 
 @Composable
-fun MovieItem(movie: MovieEntity) {
+fun MovieItem(movie: MovieEntity, onClick: () -> Unit) {
     Card(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick),
         elevation = CardDefaults.cardElevation(4.dp)
     ) {
         Column(modifier = Modifier.padding(12.dp)) {
