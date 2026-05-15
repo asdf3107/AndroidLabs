@@ -73,19 +73,7 @@ fun AppLogo() {
 
         Spacer(modifier = Modifier.height(12.dp))
 
-        // Название приложения
-//        Text(
-//            text = "MyApp",
-//            fontSize = 22.sp,
-//            fontWeight = FontWeight.Bold,
-//            color = Color(0xFF6200EE)
-//        )
 
-//        Text(
-//            text = "Добро пожаловать",
-//            fontSize = 13.sp,
-//            color = Color.Gray
-//        )
     }
 }
 
@@ -100,6 +88,7 @@ fun LoginScreen(onLoginSuccess: () -> Unit) {
     var showError by rememberSaveable { mutableStateOf(false) }
 
     val validCredentials = listOf(
+        "1" to "1",
         "user1@mail.com" to "password1",
         "user2@mail.com" to "password2",
         "user3@mail.com" to "password3",
