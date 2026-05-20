@@ -3,10 +3,17 @@ package com.example.myapplicationwithcompose
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -28,11 +35,7 @@ import kotlinx.coroutines.launch
 import androidx.compose.ui.platform.LocalContext
 
 import androidx.navigation.compose.NavHost
-//import androidx.navigation.compose.composable
-//import androidx.navigation.compose.rememberNavController
-import androidx.navigation.navArgument   // ← this fixes navArgument + type
-
-
+import androidx.navigation.navArgument
 
 class MoviesViewModel : ViewModel() {
     private val _movies = MutableStateFlow<List<MovieEntity>>(emptyList())
@@ -76,7 +79,7 @@ class MoviesViewModel : ViewModel() {
                     _isLoading.value = false
                     return@launch
                 }
-                
+
                 val apiMovies = RetrofitClient.api.getMovies()
                 saveMoviesToDb(apiMovies, context)
                 _movies.value = loadMoviesFromDb(context)
@@ -120,12 +123,6 @@ class SecondActivity : ComponentActivity() {
                             val context = LocalContext.current
                             val db = AppDatabase.getDatabase(context)
 
-//                            val movie by remember(title) {
-//                                derivedStateOf {
-//                                    db.movieDao().getAll().find { it.title == title }
-//                                }
-//                            }
-
                             val movie by produceState<MovieEntity?>(initialValue = null, title) {
                                 value = db.movieDao().getAll().find { it.title == title }
                             }
@@ -146,6 +143,7 @@ class SecondActivity : ComponentActivity() {
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class, ExperimentalMaterial3Api::class)
 @Composable
 fun SecondScreen(vm: MoviesViewModel = viewModel(), onMovieClick: (MovieEntity) -> Unit) {
     val movies by vm.movies.collectAsState()
@@ -154,6 +152,23 @@ fun SecondScreen(vm: MoviesViewModel = viewModel(), onMovieClick: (MovieEntity) 
     var ascending by remember { mutableStateOf(true) }
     val context = LocalContext.current
 
+    val listState = rememberLazyListState()
+
+    // FAB visibility: visible when scrolled down (first visible item > 0)
+    val fabVisible by remember {
+        derivedStateOf {
+            listState.firstVisibleItemIndex > 0 || listState.firstVisibleItemScrollOffset > 0
+        }
+    }
+
+    // Coroutine scope for FAB click
+    val coroutineScope = rememberCoroutineScope()
+
+    // BottomSheet state
+    var selectedMovie by remember { mutableStateOf<MovieEntity?>(null) }
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+
+
     LaunchedEffect(Unit) {
         vm.loadMovies(context)
     }
@@ -161,15 +176,65 @@ fun SecondScreen(vm: MoviesViewModel = viewModel(), onMovieClick: (MovieEntity) 
     val configuration = LocalConfiguration.current
     val isLandscape = configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
 
-    if (isLandscape) {
-        Row(modifier = Modifier.fillMaxSize()) {
-            Column(
-                modifier = Modifier.weight(1f).padding(16.dp),
-                horizontalAlignment = Alignment.CenterHorizontally
-            ) {
+    // Main content with FAB overlay
+    Box(modifier = Modifier.fillMaxSize()) {
+        if (isLandscape) {
+            // Landscape layout
+            Row(modifier = Modifier.fillMaxSize()) {
+                Column(
+                    modifier = Modifier.weight(1f).padding(16.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Text(
+                        text = "Список фильмов",
+                        fontSize = 20.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color(0xFF6200EE),
+                        modifier = Modifier.padding(bottom = 16.dp)
+                    )
+
+                    Button(
+                        onClick = {
+                            ascending = !ascending
+                            vm.toggleSort()
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF6200EE))
+                    ) {
+                        Text(if (ascending) "А → Я" else "Я → А", color = Color.White)
+                    }
+
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    when {
+                        isLoading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                            CircularProgressIndicator()
+                        }
+                        error != null -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                            Text(error!!, color = Color.Red)
+                        }
+                        else -> LazyColumn(
+                            modifier = Modifier.fillMaxSize(),
+                            verticalArrangement = Arrangement.spacedBy(8.dp),
+                            state = listState
+                        ) {
+                            items(movies) { movie ->
+                                MovieItem(
+                                    movie = movie,
+                                    onClick = { onMovieClick(movie) },
+                                    onLongClick = { selectedMovie = movie }
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        } else {
+            // Portrait layout
+            Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
                 Text(
                     text = "Список фильмов",
-                    fontSize = 20.sp,
+                    fontSize = 24.sp,
                     fontWeight = FontWeight.Bold,
                     color = Color(0xFF6200EE),
                     modifier = Modifier.padding(bottom = 16.dp)
@@ -197,64 +262,70 @@ fun SecondScreen(vm: MoviesViewModel = viewModel(), onMovieClick: (MovieEntity) 
                     }
                     else -> LazyColumn(
                         modifier = Modifier.fillMaxSize(),
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                        state = listState
                     ) {
                         items(movies) { movie ->
-                            MovieItem(movie = movie, onClick = { onMovieClick(movie) })
+                            MovieItem(
+                                movie = movie,
+                                onClick = { onMovieClick(movie) },
+                                onLongClick = { selectedMovie = movie }
+                            )
                         }
                     }
                 }
             }
         }
-    } else {
-        Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
-            Text(
-                text = "Список фильмов",
-                fontSize = 24.sp,
-                fontWeight = FontWeight.Bold,
-                color = Color(0xFF6200EE),
-                modifier = Modifier.padding(bottom = 16.dp)
-            )
 
-            Button(
+        // FAB - scroll to top
+        AnimatedVisibility(
+            visible = fabVisible,
+            enter = fadeIn(),
+            exit = fadeOut(),
+            modifier = Modifier
+                .align(Alignment.BottomEnd)
+                .padding(16.dp)
+        ) {
+            FloatingActionButton(
                 onClick = {
-                    ascending = !ascending
-                    vm.toggleSort()
-                },
-                modifier = Modifier.fillMaxWidth(),
-                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF6200EE))
-            ) {
-                Text(if (ascending) "А → Я" else "Я → А", color = Color.White)
-            }
-
-            Spacer(modifier = Modifier.height(8.dp))
-
-            when {
-                isLoading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    CircularProgressIndicator()
-                }
-                error != null -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    Text(error!!, color = Color.Red)
-                }
-                else -> LazyColumn(
-                    modifier = Modifier.fillMaxSize(),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    items(movies) { movie ->
-                        MovieItem(movie = movie, onClick = { onMovieClick(movie) })
+                    coroutineScope.launch {
+                        listState.animateScrollToItem(0)
                     }
-                }
+                },
+                containerColor = Color(0xFF6200EE)
+            ) {
+                Icon(
+                    imageVector = Icons.Default.KeyboardArrowUp,
+                    contentDescription = "Прокрутить в начало",
+                    tint = Color.White
+                )
+            }
+        }
+    }
+
+    // BottomSheet - shows when selectedMovie is not null
+    if (selectedMovie != null) {
+        ModalBottomSheet(
+            onDismissRequest = { selectedMovie = null },
+            sheetState = sheetState
+        ) {
+            MovieDetailBottomSheet(movie = selectedMovie!!) {
+                selectedMovie = null
             }
         }
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
-fun MovieItem(movie: MovieEntity, onClick: () -> Unit) {
+fun MovieItem(movie: MovieEntity, onClick: () -> Unit, onLongClick: () -> Unit) {
     Card(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable(onClick = onClick),
+            .combinedClickable(
+                onClick = onClick,
+                onLongClick = onLongClick
+            ),
         elevation = CardDefaults.cardElevation(4.dp)
     ) {
         Column(modifier = Modifier.padding(12.dp)) {
@@ -265,5 +336,61 @@ fun MovieItem(movie: MovieEntity, onClick: () -> Unit) {
             Text("Длительность: ${movie.duration} мин", fontSize = 14.sp, color = Color.Gray)
             Text("Жанр: ${movie.genre}", fontSize = 14.sp, color = Color.Gray)
         }
+    }
+}
+
+@Composable
+fun MovieDetailBottomSheet(movie: MovieEntity, onDismiss: () -> Unit) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(24.dp)
+    ) {
+        Text(
+            text = movie.title,
+            fontSize = 22.sp,
+            fontWeight = FontWeight.Bold,
+            color = Color(0xFF6200EE),
+            modifier = Modifier.padding(bottom = 20.dp)
+        )
+
+        DetailRow(label = "Дата выхода", value = movie.releaseDate)
+        DetailRow(label = "Рейтинг IMDb", value = movie.imdbRating.toString())
+        DetailRow(label = "Режиссёр", value = movie.director)
+        DetailRow(label = "Длительность", value = "${movie.duration} мин")
+        DetailRow(label = "Жанр", value = movie.genre)
+
+        Spacer(modifier = Modifier.height(24.dp))
+
+        Button(
+            onClick = onDismiss,
+            modifier = Modifier.fillMaxWidth(),
+            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF6200EE))
+        ) {
+            Text("Закрыть", color = Color.White)
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
+    }
+}
+
+@Composable
+fun DetailRow(label: String, value: String) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(bottom = 12.dp)
+    ) {
+        Text(
+            text = "$label: ",
+            fontWeight = FontWeight.SemiBold,
+            fontSize = 15.sp,
+            color = Color.Black
+        )
+        Text(
+            text = value,
+            fontSize = 15.sp,
+            color = Color.DarkGray
+        )
     }
 }
